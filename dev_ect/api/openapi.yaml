@@ -1,0 +1,42 @@
+openapi: 3.0.3
+info:
+  title: ECT Anonymization API
+  version: 1.0.0
+  description: A pipeline endpoint for anonymizing sensitive data in various file formats.
+servers:
+  - url: /api
+paths:
+  /anonymize:
+    post:
+      summary: Upload a file (CSV, XLSX, TXT, PDF, DB) to redact sensitive PII.
+      operationId: handlers.process_upload
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The file to be anonymized.
+      responses:
+        '200':
+          description: Successfully processed the file.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  data_type:
+                    type: string
+                  results:
+                    # Can be a string (for text/PDFs) or an array of objects (for dataframes)
+                    type: string 
+        '400':
+          description: Invalid request or unsupported file.
+        '500':
+          description: Internal server error during processing.

@@ -1,0 +1,21 @@
+services:
+  api:
+    build: ./api
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./api:/app
+    
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+    environment:
+      # This tells Streamlit to look for the API container inside the Docker network
+      - API_URL=http://api:5000
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - ./frontend:/app
