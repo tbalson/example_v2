@@ -8,7 +8,7 @@ servers:
 paths:
   /anonymize:
     post:
-      summary: Upload a file (CSV, XLSX, TXT, PDF, DB) to redact sensitive PII.
+      summary: Upload a batch of files (CSV, XLSX, TXT, PDF, DB) to redact sensitive PII.
       operationId: handlers.process_upload
       requestBody:
         required: true
@@ -17,13 +17,15 @@ paths:
             schema:
               type: object
               properties:
-                file:
-                  type: string
-                  format: binary
-                  description: The file to be anonymized.
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                  description: The array of files to be anonymized.
       responses:
         '200':
-          description: Successfully processed the file.
+          description: Successfully processed the files.
           content:
             application/json:
               schema:
@@ -31,11 +33,12 @@ paths:
                 properties:
                   status:
                     type: string
-                  data_type:
-                    type: string
-                  results:
-                    # Can be a string (for text/PDFs) or an array of objects (for dataframes)
-                    type: string 
+                  processed_count:
+                    type: integer
+                  batch_results:
+                    type: array
+                    items:
+                      type: object
         '400':
           description: Invalid request or unsupported file.
         '500':

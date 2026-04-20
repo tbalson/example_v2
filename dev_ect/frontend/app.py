@@ -4,41 +4,44 @@ import os
 from openai import OpenAI
 
 API_URL = os.getenv("API_URL", "http://localhost:5000")
-# Make sure to pass this into your docker-compose.yml environment variables later!
-#client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Initializes using the OPENAI_API_KEY from your .env file
 client = OpenAI()
 
 st.set_page_config(page_title="ECT Anonymization & AI Portal", layout="centered")
 st.title("🛡️ Secure Data Pipeline & AI")
 
-st.write("Upload a dataset to automatically redact PII. Once clean, you can query the data using AI.")
+st.write("Upload a batch of datasets to automatically redact PII. Once clean, you can query the data using AI.")
 
-# Initialize session state to hold our clean data
+# Initialize session state to hold our clean batch data
 if 'clean_data' not in st.session_state:
     st.session_state['clean_data'] = None
 
-uploaded_file = st.file_uploader("Choose a file", type=['csv', 'xlsx', 'xls', 'pdf', 'db', 'sqlite', 'txt'])
+# 1. Enable multiple file uploads
+uploaded_files = st.file_uploader(
+    "Choose files", 
+    type=['csv', 'xlsx', 'xls', 'pdf', 'db', 'sqlite', 'txt'], 
+    accept_multiple_files=True
+)
 
-if uploaded_file is not None:
-    if st.button("Anonymize Data"):
-        with st.spinner("Analyzing and redacting PII..."):
+if uploaded_files:
+    if st.button("Anonymize Batch"):
+        with st.spinner(f"Analyzing and redacting PII for {len(uploaded_files)} file(s)..."):
             try:
-                files = {'file': (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
+                # 2. Prepare the multipart/form-data payload for multiple files
+                # We map every file to the 'files' key so Connexion receives an array
+                files_payload = [
+                    ('files', (file.name, file.getvalue(), file.type)) 
+                    for file in uploaded_files
+                ]
                 
-                response = requests.post(f"{API_URL}/api/anonymize", files=files)
+                response = requests.post(f"{API_URL}/api/anonymize", files=files_payload)
                 response.raise_for_status()
                 
                 data = response.json()
-                st.success("Anonymization Complete!")
+                st.success(f"Anonymization Complete! Processed {data.get('processed_count', 0)} file(s).")
                 
-                # Store the clean results in session state so the LLM can use it
-                st.session_state['clean_data'] = data["results"]
-                st.session_state['data_type'] = data["data_type"]
-                
-                if st.session_state['data_type'] == "dataframe":
-                    st.dataframe(st.session_state['clean_data'])
-                else:
-                    st.text_area("Anonymized Output", st.session_state['clean_data'], height=300)
+                # Store the array of results in session state
+                st.session_state['clean_data'] = data.get("batch_results", [])
                 
             except requests.exceptions.HTTPError as err:
                 try:
@@ -49,18 +52,30 @@ if uploaded_file is not None:
             except Exception as e:
                 st.error(f"An error occurred: {e}")
 
-# --- NEW: LLM CHAT INTERFACE ---
+# 3. Display the processed files iteratively
+if st.session_state['clean_data']:
+    st.divider()
+    st.subheader("Anonymized Data Preview")
+    
+    for item in st.session_state['clean_data']:
+        st.markdown(f"**Filename:** `{item['filename']}`")
+        if item['data_type'] == "dataframe":
+            st.dataframe(item['results'])
+        else:
+            st.text_area(f"Output for {item['filename']}", item['results'], height=150)
+        st.write("---")
+
+# --- LLM CHAT INTERFACE ---
 # Only show this if we have clean data sitting in memory
 if st.session_state['clean_data'] is not None:
-    st.divider()
-    st.subheader("💬 Query Anonymized Data")
+    st.subheader("💬 Query Anonymized Data Batch")
     
-    user_prompt = st.text_input("Ask a question about this data:")
+    user_prompt = st.text_input("Ask a question about this data batch:")
     
     if st.button("Ask LLM") and user_prompt:
         with st.spinner("Generating insights..."):
             try:
-                # Convert the clean data into a string format the LLM can read
+                # Convert the entire batch array into a string format the LLM can read
                 context_string = str(st.session_state['clean_data'])
                 
                 # Build the prompt
@@ -68,10 +83,10 @@ if st.session_state['clean_data'] is not None:
                 
                 # Call OpenAI
                 completion = client.chat.completions.create(
-                    model="gpt-3.5-turbo", # or gpt-4
+                    model="gpt-3.5-turbo", 
                     messages=[
                         {"role": "system", "content": system_message},
-                        {"role": "user", "content": f"Context Data: {context_string}\n\nQuestion: {user_prompt}"}
+                        {"role": "user", "content": f"Context Data Batch: {context_string}\n\nQuestion: {user_prompt}"}
                     ]
                 )
                 

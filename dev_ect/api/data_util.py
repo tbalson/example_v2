@@ -11,36 +11,39 @@ text files, PDFs, CSVs, Excel files, and SQLite databases. This model can be int
 repeatable and documentable way.
 """
 
-
-
-
-
-
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 import os
 from pathlib import Path
 import pandas as pd
 import sqlite3
-from presidio_analyzer.nlp_engine import SpacyNlpEngine # Import SpacyNlpEngine
+from presidio_analyzer.nlp_engine import SpacyNlpEngine
 from pypdf import PdfReader
-
+import logging
 
 class Data:
-    def __init__(self, dst=0.2):
+    def __init__(self, dst=0.2, log_file="anonymization_reports.log"):
         """Initialize Data anonymization engine.
-
 
         dst: float, optional
             minimum confidence score threshold for entity detection (default 0.2).
         """
-        # Configure the NLP/analyzer/anonymizer once per object instance
-        # default_score_threshold=0.2 means that any entity with a confidence
-        # score above 0.2 will be considered for anonymization.
         self.nlp_engine = SpacyNlpEngine()
         self.analyzer = AnalyzerEngine(nlp_engine=self.nlp_engine, default_score_threshold=dst)
         self.anonymizer = AnonymizerEngine()
-
+        
+        # --- NEW: Setup File Logging ---
+        self.logger = logging.getLogger("ECT_Anonymizer")
+        self.logger.setLevel(logging.INFO)
+        
+        # Prevent adding multiple file handlers if the class is instantiated multiple times
+        if not self.logger.handlers:
+            fh = logging.FileHandler(log_file)
+            fh.setLevel(logging.INFO)
+            # Add a timestamp to the log entries
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s\n%(message)s\n')
+            fh.setFormatter(formatter)
+            self.logger.addHandler(fh)
 
     def data_type(self, filename):
         """Determines file type based on extension."""
@@ -60,13 +63,12 @@ class Data:
         }
         return file_types.get(extension, 'unknown')
 
-
     def process_dataframe(self, df, entities):
         """Processes a DataFrame using the provided analyzer and anonymizer."""
         df_clean = df.copy()
-        sensitive_data_report = {}  # Track sensitive data found: {column: {entity_type: count}}
+        sensitive_data_report = {}  
        
-        for col in df_clean.columns:  # Iterate over all columns
+        for col in df_clean.columns:  
             sensitive_data_report[col] = {}
             anonymized_values = []
            
@@ -74,37 +76,41 @@ class Data:
                 text = str(value)
                 results = self.analyzer.analyze(text=text, entities=entities, language='en')
                
-                # Track entity types found in this cell
                 for entity in results:
                     entity_type = entity.entity_type
                     sensitive_data_report[col][entity_type] = sensitive_data_report[col].get(entity_type, 0) + 1
                
-                # Anonymize the text
                 anonymized_result = self.anonymizer.anonymize(text=text, analyzer_results=results)
                 anonymized_values.append(anonymized_result.text)
            
             df_clean[col] = anonymized_values
            
-            # Remove columns with no sensitive data for cleaner reporting
             if not sensitive_data_report[col]:
                 del sensitive_data_report[col]
        
-        # Print report
+        # --- UPDATED: Compile report to a string for both printing and logging ---
+        report_lines = []
         if sensitive_data_report:
-            print("\n" + "="*70)
-            print("SENSITIVE DATA DETECTION REPORT")
-            print("="*70)
+            report_lines.append("="*70)
+            report_lines.append("SENSITIVE DATA DETECTION REPORT (DATAFRAME)")
+            report_lines.append("="*70)
             for col, entity_counts in sensitive_data_report.items():
-                print(f"\nColumn: '{col}'")
+                report_lines.append(f"\nColumn: '{col}'")
                 total_detections = sum(entity_counts.values())
                 for entity_type, count in sorted(entity_counts.items()):
-                    print(f"  • {entity_type}: {count} occurrence(s)")
-                print(f"  Total sensitive items in column: {total_detections}")
-            print("="*70 + "\n")
+                    report_lines.append(f"  • {entity_type}: {count} occurrence(s)")
+                report_lines.append(f"  Total sensitive items in column: {total_detections}")
+            report_lines.append("="*70)
         else:
-            print("\n" + "="*70)
-            print("No sensitive data detected in any columns.")
-            print("="*70 + "\n")
+            report_lines.append("="*70)
+            report_lines.append("No sensitive data detected in any columns.")
+            report_lines.append("="*70)
+        
+        full_report = "\n".join(report_lines)
+        print("\n" + full_report + "\n")
+        
+        # Write to log file
+        self.logger.info(full_report)
        
         return df_clean
    
@@ -112,26 +118,30 @@ class Data:
         """Anonymizes a block of text using the provided analyzer and anonymizer."""
         results = self.analyzer.analyze(text=text, entities=entities, language='en')
 
-
-        # Build report for non-dataframe text input
+        # --- UPDATED: Compile report to a string for both printing and logging ---
+        report_lines = []
         if results:
             entity_counts = {}
             for entity in results:
                 entity_counts[entity.entity_type] = entity_counts.get(entity.entity_type, 0) + 1
 
-
-            print("\n" + "="*70)
-            print("SENSITIVE DATA DETECTION REPORT (text/pdf)")
-            print("="*70)
+            report_lines.append("="*70)
+            report_lines.append("SENSITIVE DATA DETECTION REPORT (TEXT/DOCUMENT)")
+            report_lines.append("="*70)
             for entity_type, count in sorted(entity_counts.items()):
-                print(f"  • {entity_type}: {count} occurrence(s)")
-            print(f"  Total sensitive items in text: {sum(entity_counts.values())}")
-            print("="*70 + "\n")
+                report_lines.append(f"  • {entity_type}: {count} occurrence(s)")
+            report_lines.append(f"  Total sensitive items in text: {sum(entity_counts.values())}")
+            report_lines.append("="*70)
         else:
-            print("\n" + "="*70)
-            print("No sensitive data detected in text/pdf content.")
-            print("="*70 + "\n")
+            report_lines.append("="*70)
+            report_lines.append("No sensitive data detected in text/pdf content.")
+            report_lines.append("="*70)
 
+        full_report = "\n".join(report_lines)
+        print("\n" + full_report + "\n")
+        
+        # Write to log file
+        self.logger.info(full_report)
 
         anonymized_result = self.anonymizer.anonymize(text=text, analyzer_results=results)
         return anonymized_result.text
@@ -141,14 +151,11 @@ class Data:
         if entities is None:
             entities = ['PERSON', 'ORG', 'GPE', 'DATE', 'EMAIL', 'EMAIL_ADDRESS', 'PHONE', 'PHONE_NUMBER', 'ADDRESS', 'LOCATION', 'URL', 'IP_ADDRESS', 'US_SSN', 'CREDIT_CARD', "BIRTHDATE", "DL_NUMBER"]
 
-
         if isinstance(source, (str, Path)) and os.path.exists(source):
             ext = Path(source).suffix.lower()
-            #csv
             if ext == '.csv':
                 df = pd.read_csv(source)
                 return self.process_dataframe(df, entities)
-            # xlsx, xls
             elif ext in ['.xlsx', '.xls']:
                 df = pd.read_excel(source)
                 return self.process_dataframe(df, entities)
@@ -159,8 +166,6 @@ class Data:
                 df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
                 conn.close()
                 return self.process_dataframe(df, entities)
-               
-            # text files
             elif ext in ['.txt', '.md', '.log', '.pdf']:
                 if ext == '.pdf':
                     reader = PdfReader(source)
@@ -175,7 +180,3 @@ class Data:
                 return self.anonymize_text_block(source.read(), entities)
             else:
                 raise ValueError(f"Unsupported file type: {ext}")
-
-
-
-
